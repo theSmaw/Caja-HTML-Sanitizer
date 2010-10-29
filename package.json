@@ -1,8 +1,8 @@
 {
   "name"        : "sanitizer",
   "description" : "Caja's HTML Sanitizer as a Node.js module",
-  "version"     : "0.0.6",
-  "author"      : "Ben Smawfield <brettstimmerman@gmail.com>",
+  "version"     : "0.0.7",
+  "author"      : "Ben Smawfield <bensmawfield@googlemail.com>",
   "homepage"    : "http://github.com/theSmaw/Caja-HTML-Sanitizer",
   "bugs"        : {
     "mail" : "bensmawfield@googlemail.com",
