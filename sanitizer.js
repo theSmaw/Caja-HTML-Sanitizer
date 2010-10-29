@@ -535,3 +535,6 @@ function html_sanitize(htmlText, opt_uriPolicy, opt_nmTokenPolicy) {
       })(htmlText, out);
   return out.join('');
 }
+
+exports.escape = html.escapeAttrib;
+exports.sanitize = html_sanitize;
