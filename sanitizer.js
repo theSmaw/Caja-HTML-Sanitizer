@@ -537,4 +537,7 @@ function html_sanitize(htmlText, opt_uriPolicy, opt_nmTokenPolicy) {
 }
 
 exports.escape = html.escapeAttrib;
+exports.makeSaxParser = makeSaxParser;
+exports.normalizeRCData = normalizeRCData;
 exports.sanitize = html_sanitize;
+exports.unescapeEntities = unescapeEntities;
