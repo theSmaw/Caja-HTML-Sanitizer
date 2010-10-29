@@ -1,0 +1,16 @@
+{
+  "name"        : "sanitizer",
+  "description" : "Allows user to use Caja's HTML Sanitizer to escape strings on output",
+  "version"     : "0.0.1",
+  "author"      : "Ben Smawfield <brettstimmerman@gmail.com>",
+  "homepage"    : "http://github.com/theSmaw/Caja-HTML-Sanitizer",
+  "bugs"        : {
+    "mail" : "bensmawfield@googlemail.com",
+    "web"  : "http://github.com/theSmaw/Caja-HTML-Sanitizer/issues"
+  },
+  "main"        : "sanitizer.js",
+  "repository" : {
+    "type" : "git",
+    "url"  : "http://github.com/theSmaw/Caja-HTML-Sanitizer.git"
+  }
+}
