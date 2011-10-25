@@ -6,7 +6,7 @@
   "homepage"    : "http://github.com/theSmaw/Caja-HTML-Sanitizer",
   "bugs"        : {
     "mail" : "bensmawfield@googlemail.com",
-    "web"  : "http://github.com/theSmaw/Caja-HTML-Sanitizer/issues"
+    "url"  : "http://github.com/theSmaw/Caja-HTML-Sanitizer/issues"
   },
   "main"        : "sanitizer.js",
   "repository" : {
