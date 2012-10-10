@@ -890,8 +890,6 @@ html4 .ELEMENTS = {
   'var': 0
 };
 
-exports.escape = html.escapeAttrib;
-exports.makeSaxParser = html.makeSaxParser;
-exports.normalizeRCData = html.normalizeRCData;
-exports.sanitize = html_sanitize;
-exports.unescapeEntities = html.unescapeEntities;
+html.escape = html.escapeAttrib;
+html.sanitize = html_sanitize;
+module.exports = html;
