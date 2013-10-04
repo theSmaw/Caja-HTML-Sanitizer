@@ -890,8 +890,23 @@ html4 .ELEMENTS = {
   'var': 0
 };
 
-exports.escape = html.escapeAttrib;
-exports.makeSaxParser = html.makeSaxParser;
-exports.normalizeRCData = html.normalizeRCData;
-exports.sanitize = html_sanitize;
-exports.unescapeEntities = html.unescapeEntities;
+var Sanitizer = {
+  escape: html.escapeAttrib,
+  makeSaxParser: html.makeSaxParser,
+  normalizeRCData: html.normalizeRCData,
+  sanitize: html_sanitize,
+  unescapeEntities: html.unescapeEntities
+};
+
+// Export the `Sanitizer` object for **Node.js**, with
+// backwards-compatibility for the old `require()` API. If we're in
+// the browser, add `Sanitizer` as a global object via a string identifier,
+// for Closure Compiler "advanced" mode.
+if (typeof exports !== 'undefined') {
+  if (typeof module !== 'undefined' && module.exports) {
+    exports = module.exports = Sanitizer;
+  }
+  exports.Sanitizer = Sanitizer;
+} else {
+  this.Sanitizer = Sanitizer;
+}
