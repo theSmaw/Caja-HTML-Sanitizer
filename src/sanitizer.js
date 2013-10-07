@@ -33,6 +33,753 @@
  * \@provides html, html_sanitize
  */
 
+
+// Copyright (C) 2010 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview
+ * Implements RFC 3986 for parsing/formatting URIs.
+ *
+ * @author mikesamuel@gmail.com
+ * \@provides URI
+ * \@overrides window
+ */
+
+var URI = (function () {
+
+    /**
+     * creates a uri from the string form.  The parser is relaxed, so special
+     * characters that aren't escaped but don't cause ambiguities will not cause
+     * parse failures.
+     *
+     * @return {URI|null}
+     */
+    function parse(uriStr) {
+        var m = ('' + uriStr).match(URI_RE_);
+        if (!m) { return null; }
+        return new URI(
+            nullIfAbsent(m[1]),
+            nullIfAbsent(m[2]),
+            nullIfAbsent(m[3]),
+            nullIfAbsent(m[4]),
+            nullIfAbsent(m[5]),
+            nullIfAbsent(m[6]),
+            nullIfAbsent(m[7]));
+    }
+
+
+    /**
+     * creates a uri from the given parts.
+     *
+     * @param scheme {string} an unencoded scheme such as "http" or null
+     * @param credentials {string} unencoded user credentials or null
+     * @param domain {string} an unencoded domain name or null
+     * @param port {number} a port number in [1, 32768].
+     *    -1 indicates no port, as does null.
+     * @param path {string} an unencoded path
+     * @param query {Array.<string>|string|null} a list of unencoded cgi
+     *   parameters where even values are keys and odds the corresponding values
+     *   or an unencoded query.
+     * @param fragment {string} an unencoded fragment without the "#" or null.
+     * @return {URI}
+     */
+    function create(scheme, credentials, domain, port, path, query, fragment) {
+        var uri = new URI(
+            encodeIfExists2(scheme, URI_DISALLOWED_IN_SCHEME_OR_CREDENTIALS_),
+            encodeIfExists2(
+                credentials, URI_DISALLOWED_IN_SCHEME_OR_CREDENTIALS_),
+            encodeIfExists(domain),
+            port > 0 ? port.toString() : null,
+            encodeIfExists2(path, URI_DISALLOWED_IN_PATH_),
+            null,
+            encodeIfExists(fragment));
+        if (query) {
+            if ('string' === typeof query) {
+                uri.setRawQuery(query.replace(/[^?&=0-9A-Za-z_\-~.%]/g, encodeOne));
+            } else {
+                uri.setAllParameters(query);
+            }
+        }
+        return uri;
+    }
+    function encodeIfExists(unescapedPart) {
+        if ('string' == typeof unescapedPart) {
+            return encodeURIComponent(unescapedPart);
+        }
+        return null;
+    };
+    /**
+     * if unescapedPart is non null, then escapes any characters in it that aren't
+     * valid characters in a url and also escapes any special characters that
+     * appear in extra.
+     *
+     * @param unescapedPart {string}
+     * @param extra {RegExp} a character set of characters in [\01-\177].
+     * @return {string|null} null iff unescapedPart == null.
+     */
+    function encodeIfExists2(unescapedPart, extra) {
+        if ('string' == typeof unescapedPart) {
+            return encodeURI(unescapedPart).replace(extra, encodeOne);
+        }
+        return null;
+    };
+    /** converts a character in [\01-\177] to its url encoded equivalent. */
+    function encodeOne(ch) {
+        var n = ch.charCodeAt(0);
+        return '%' + '0123456789ABCDEF'.charAt((n >> 4) & 0xf) +
+            '0123456789ABCDEF'.charAt(n & 0xf);
+    }
+
+    /**
+     * {@updoc
+     *  $ normPath('foo/./bar')
+     *  # 'foo/bar'
+     *  $ normPath('./foo')
+     *  # 'foo'
+     *  $ normPath('foo/.')
+     *  # 'foo'
+     *  $ normPath('foo//bar')
+     *  # 'foo/bar'
+     * }
+     */
+    function normPath(path) {
+        return path.replace(/(^|\/)\.(?:\/|$)/g, '$1').replace(/\/{2,}/g, '/');
+    }
+
+    var PARENT_DIRECTORY_HANDLER = new RegExp(
+        ''
+            // A path break
+            + '(/|^)'
+            // followed by a non .. path element
+            // (cannot be . because normPath is used prior to this RegExp)
+            + '(?:[^./][^/]*|\\.{2,}(?:[^./][^/]*)|\\.{3,}[^/]*)'
+            // followed by .. followed by a path break.
+            + '/\\.\\.(?:/|$)');
+
+    var PARENT_DIRECTORY_HANDLER_RE = new RegExp(PARENT_DIRECTORY_HANDLER);
+
+    var EXTRA_PARENT_PATHS_RE = /^(?:\.\.\/)*(?:\.\.$)?/;
+
+    /**
+     * Normalizes its input path and collapses all . and .. sequences except for
+     * .. sequences that would take it above the root of the current parent
+     * directory.
+     * {@updoc
+     *  $ collapse_dots('foo/../bar')
+     *  # 'bar'
+     *  $ collapse_dots('foo/./bar')
+     *  # 'foo/bar'
+     *  $ collapse_dots('foo/../bar/./../../baz')
+     *  # 'baz'
+     *  $ collapse_dots('../foo')
+     *  # '../foo'
+     *  $ collapse_dots('../foo').replace(EXTRA_PARENT_PATHS_RE, '')
+     *  # 'foo'
+     * }
+     */
+    function collapse_dots(path) {
+        if (path === null) { return null; }
+        var p = normPath(path);
+        // Only /../ left to flatten
+        var r = PARENT_DIRECTORY_HANDLER_RE;
+        // We replace with $1 which matches a / before the .. because this
+        // guarantees that:
+        // (1) we have at most 1 / between the adjacent place,
+        // (2) always have a slash if there is a preceding path section, and
+        // (3) we never turn a relative path into an absolute path.
+        for (var q; (q = p.replace(r, '$1')) != p; p = q) {};
+        return p;
+    }
+
+    /**
+     * resolves a relative url string to a base uri.
+     * @return {URI}
+     */
+    function resolve(baseUri, relativeUri) {
+        // there are several kinds of relative urls:
+        // 1. //foo - replaces everything from the domain on.  foo is a domain name
+        // 2. foo - replaces the last part of the path, the whole query and fragment
+        // 3. /foo - replaces the the path, the query and fragment
+        // 4. ?foo - replace the query and fragment
+        // 5. #foo - replace the fragment only
+
+        var absoluteUri = baseUri.clone();
+        // we satisfy these conditions by looking for the first part of relativeUri
+        // that is not blank and applying defaults to the rest
+
+        var overridden = relativeUri.hasScheme();
+
+        if (overridden) {
+            absoluteUri.setRawScheme(relativeUri.getRawScheme());
+        } else {
+            overridden = relativeUri.hasCredentials();
+        }
+
+        if (overridden) {
+            absoluteUri.setRawCredentials(relativeUri.getRawCredentials());
+        } else {
+            overridden = relativeUri.hasDomain();
+        }
+
+        if (overridden) {
+            absoluteUri.setRawDomain(relativeUri.getRawDomain());
+        } else {
+            overridden = relativeUri.hasPort();
+        }
+
+        var rawPath = relativeUri.getRawPath();
+        var simplifiedPath = collapse_dots(rawPath);
+        if (overridden) {
+            absoluteUri.setPort(relativeUri.getPort());
+            simplifiedPath = simplifiedPath
+                && simplifiedPath.replace(EXTRA_PARENT_PATHS_RE, '');
+        } else {
+            overridden = !!rawPath;
+            if (overridden) {
+                // resolve path properly
+                if (simplifiedPath.charCodeAt(0) !== 0x2f /* / */) {  // path is relative
+                    var absRawPath = collapse_dots(absoluteUri.getRawPath() || '')
+                        .replace(EXTRA_PARENT_PATHS_RE, '');
+                    var slash = absRawPath.lastIndexOf('/') + 1;
+                    simplifiedPath = collapse_dots(
+                        (slash ? absRawPath.substring(0, slash) : '')
+                            + collapse_dots(rawPath))
+                        .replace(EXTRA_PARENT_PATHS_RE, '');
+                }
+            } else {
+                simplifiedPath = simplifiedPath
+                    && simplifiedPath.replace(EXTRA_PARENT_PATHS_RE, '');
+                if (simplifiedPath !== rawPath) {
+                    absoluteUri.setRawPath(simplifiedPath);
+                }
+            }
+        }
+
+        if (overridden) {
+            absoluteUri.setRawPath(simplifiedPath);
+        } else {
+            overridden = relativeUri.hasQuery();
+        }
+
+        if (overridden) {
+            absoluteUri.setRawQuery(relativeUri.getRawQuery());
+        } else {
+            overridden = relativeUri.hasFragment();
+        }
+
+        if (overridden) {
+            absoluteUri.setRawFragment(relativeUri.getRawFragment());
+        }
+
+        return absoluteUri;
+    }
+
+    /**
+     * a mutable URI.
+     *
+     * This class contains setters and getters for the parts of the URI.
+     * The <tt>getXYZ</tt>/<tt>setXYZ</tt> methods return the decoded part -- so
+     * <code>uri.parse('/foo%20bar').getPath()</code> will return the decoded path,
+     * <tt>/foo bar</tt>.
+     *
+     * <p>The raw versions of fields are available too.
+     * <code>uri.parse('/foo%20bar').getRawPath()</code> will return the raw path,
+     * <tt>/foo%20bar</tt>.  Use the raw setters with care, since
+     * <code>URI::toString</code> is not guaranteed to return a valid url if a
+     * raw setter was used.
+     *
+     * <p>All setters return <tt>this</tt> and so may be chained, a la
+     * <code>uri.parse('/foo').setFragment('part').toString()</code>.
+     *
+     * <p>You should not use this constructor directly -- please prefer the factory
+     * functions {@link uri.parse}, {@link uri.create}, {@link uri.resolve}
+     * instead.</p>
+     *
+     * <p>The parameters are all raw (assumed to be properly escaped) parts, and
+     * any (but not all) may be null.  Undefined is not allowed.</p>
+     *
+     * @constructor
+     */
+    function URI(
+        rawScheme,
+        rawCredentials, rawDomain, port,
+        rawPath, rawQuery, rawFragment) {
+        this.scheme_ = rawScheme;
+        this.credentials_ = rawCredentials;
+        this.domain_ = rawDomain;
+        this.port_ = port;
+        this.path_ = rawPath;
+        this.query_ = rawQuery;
+        this.fragment_ = rawFragment;
+        /**
+         * @type {Array|null}
+         */
+        this.paramCache_ = null;
+    }
+
+    /** returns the string form of the url. */
+    URI.prototype.toString = function () {
+        var out = [];
+        if (null !== this.scheme_) { out.push(this.scheme_, ':'); }
+        if (null !== this.domain_) {
+            out.push('//');
+            if (null !== this.credentials_) { out.push(this.credentials_, '@'); }
+            out.push(this.domain_);
+            if (null !== this.port_) { out.push(':', this.port_.toString()); }
+        }
+        if (null !== this.path_) { out.push(this.path_); }
+        if (null !== this.query_) { out.push('?', this.query_); }
+        if (null !== this.fragment_) { out.push('#', this.fragment_); }
+        return out.join('');
+    };
+
+    URI.prototype.clone = function () {
+        return new URI(this.scheme_, this.credentials_, this.domain_, this.port_,
+            this.path_, this.query_, this.fragment_);
+    };
+
+    URI.prototype.getScheme = function () {
+        // HTML5 spec does not require the scheme to be lowercased but
+        // all common browsers except Safari lowercase the scheme.
+        return this.scheme_ && decodeURIComponent(this.scheme_).toLowerCase();
+    };
+    URI.prototype.getRawScheme = function () {
+        return this.scheme_;
+    };
+    URI.prototype.setScheme = function (newScheme) {
+        this.scheme_ = encodeIfExists2(
+            newScheme, URI_DISALLOWED_IN_SCHEME_OR_CREDENTIALS_);
+        return this;
+    };
+    URI.prototype.setRawScheme = function (newScheme) {
+        this.scheme_ = newScheme ? newScheme : null;
+        return this;
+    };
+    URI.prototype.hasScheme = function () {
+        return null !== this.scheme_;
+    };
+
+
+    URI.prototype.getCredentials = function () {
+        return this.credentials_ && decodeURIComponent(this.credentials_);
+    };
+    URI.prototype.getRawCredentials = function () {
+        return this.credentials_;
+    };
+    URI.prototype.setCredentials = function (newCredentials) {
+        this.credentials_ = encodeIfExists2(
+            newCredentials, URI_DISALLOWED_IN_SCHEME_OR_CREDENTIALS_);
+
+        return this;
+    };
+    URI.prototype.setRawCredentials = function (newCredentials) {
+        this.credentials_ = newCredentials ? newCredentials : null;
+        return this;
+    };
+    URI.prototype.hasCredentials = function () {
+        return null !== this.credentials_;
+    };
+
+
+    URI.prototype.getDomain = function () {
+        return this.domain_ && decodeURIComponent(this.domain_);
+    };
+    URI.prototype.getRawDomain = function () {
+        return this.domain_;
+    };
+    URI.prototype.setDomain = function (newDomain) {
+        return this.setRawDomain(newDomain && encodeURIComponent(newDomain));
+    };
+    URI.prototype.setRawDomain = function (newDomain) {
+        this.domain_ = newDomain ? newDomain : null;
+        // Maintain the invariant that paths must start with a slash when the URI
+        // is not path-relative.
+        return this.setRawPath(this.path_);
+    };
+    URI.prototype.hasDomain = function () {
+        return null !== this.domain_;
+    };
+
+
+    URI.prototype.getPort = function () {
+        return this.port_ && decodeURIComponent(this.port_);
+    };
+    URI.prototype.setPort = function (newPort) {
+        if (newPort) {
+            newPort = Number(newPort);
+            if (newPort !== (newPort & 0xffff)) {
+                throw new Error('Bad port number ' + newPort);
+            }
+            this.port_ = '' + newPort;
+        } else {
+            this.port_ = null;
+        }
+        return this;
+    };
+    URI.prototype.hasPort = function () {
+        return null !== this.port_;
+    };
+
+
+    URI.prototype.getPath = function () {
+        return this.path_ && decodeURIComponent(this.path_);
+    };
+    URI.prototype.getRawPath = function () {
+        return this.path_;
+    };
+    URI.prototype.setPath = function (newPath) {
+        return this.setRawPath(encodeIfExists2(newPath, URI_DISALLOWED_IN_PATH_));
+    };
+    URI.prototype.setRawPath = function (newPath) {
+        if (newPath) {
+            newPath = String(newPath);
+            this.path_ =
+                // Paths must start with '/' unless this is a path-relative URL.
+                (!this.domain_ || /^\//.test(newPath)) ? newPath : '/' + newPath;
+        } else {
+            this.path_ = null;
+        }
+        return this;
+    };
+    URI.prototype.hasPath = function () {
+        return null !== this.path_;
+    };
+
+
+    URI.prototype.getQuery = function () {
+        // From http://www.w3.org/Addressing/URL/4_URI_Recommentations.html
+        // Within the query string, the plus sign is reserved as shorthand notation
+        // for a space.
+        return this.query_ && decodeURIComponent(this.query_).replace(/\+/g, ' ');
+    };
+    URI.prototype.getRawQuery = function () {
+        return this.query_;
+    };
+    URI.prototype.setQuery = function (newQuery) {
+        this.paramCache_ = null;
+        this.query_ = encodeIfExists(newQuery);
+        return this;
+    };
+    URI.prototype.setRawQuery = function (newQuery) {
+        this.paramCache_ = null;
+        this.query_ = newQuery ? newQuery : null;
+        return this;
+    };
+    URI.prototype.hasQuery = function () {
+        return null !== this.query_;
+    };
+
+    /**
+     * sets the query given a list of strings of the form
+     * [ key0, value0, key1, value1, ... ].
+     *
+     * <p><code>uri.setAllParameters(['a', 'b', 'c', 'd']).getQuery()</code>
+     * will yield <code>'a=b&c=d'</code>.
+     */
+    URI.prototype.setAllParameters = function (params) {
+        if (typeof params === 'object') {
+            if (!(params instanceof Array)
+                && (params instanceof Object
+                || Object.prototype.toString.call(params) !== '[object Array]')) {
+                var newParams = [];
+                var i = -1;
+                for (var k in params) {
+                    var v = params[k];
+                    if ('string' === typeof v) {
+                        newParams[++i] = k;
+                        newParams[++i] = v;
+                    }
+                }
+                params = newParams;
+            }
+        }
+        this.paramCache_ = null;
+        var queryBuf = [];
+        var separator = '';
+        for (var j = 0; j < params.length;) {
+            var k = params[j++];
+            var v = params[j++];
+            queryBuf.push(separator, encodeURIComponent(k.toString()));
+            separator = '&';
+            if (v) {
+                queryBuf.push('=', encodeURIComponent(v.toString()));
+            }
+        }
+        this.query_ = queryBuf.join('');
+        return this;
+    };
+    URI.prototype.checkParameterCache_ = function () {
+        if (!this.paramCache_) {
+            var q = this.query_;
+            if (!q) {
+                this.paramCache_ = [];
+            } else {
+                var cgiParams = q.split(/[&\?]/);
+                var out = [];
+                var k = -1;
+                for (var i = 0; i < cgiParams.length; ++i) {
+                    var m = cgiParams[i].match(/^([^=]*)(?:=(.*))?$/);
+                    // From http://www.w3.org/Addressing/URL/4_URI_Recommentations.html
+                    // Within the query string, the plus sign is reserved as shorthand
+                    // notation for a space.
+                    out[++k] = decodeURIComponent(m[1]).replace(/\+/g, ' ');
+                    out[++k] = decodeURIComponent(m[2] || '').replace(/\+/g, ' ');
+                }
+                this.paramCache_ = out;
+            }
+        }
+    };
+    /**
+     * sets the values of the named cgi parameters.
+     *
+     * <p>So, <code>uri.parse('foo?a=b&c=d&e=f').setParameterValues('c', ['new'])
+     * </code> yields <tt>foo?a=b&c=new&e=f</tt>.</p>
+     *
+     * @param key {string}
+     * @param values {Array.<string>} the new values.  If values is a single string
+     *   then it will be treated as the sole value.
+     */
+    URI.prototype.setParameterValues = function (key, values) {
+        // be nice and avoid subtle bugs where [] operator on string performs charAt
+        // on some browsers and crashes on IE
+        if (typeof values === 'string') {
+            values = [ values ];
+        }
+
+        this.checkParameterCache_();
+        var newValueIndex = 0;
+        var pc = this.paramCache_;
+        var params = [];
+        for (var i = 0, k = 0; i < pc.length; i += 2) {
+            if (key === pc[i]) {
+                if (newValueIndex < values.length) {
+                    params.push(key, values[newValueIndex++]);
+                }
+            } else {
+                params.push(pc[i], pc[i + 1]);
+            }
+        }
+        while (newValueIndex < values.length) {
+            params.push(key, values[newValueIndex++]);
+        }
+        this.setAllParameters(params);
+        return this;
+    };
+    URI.prototype.removeParameter = function (key) {
+        return this.setParameterValues(key, []);
+    };
+    /**
+     * returns the parameters specified in the query part of the uri as a list of
+     * keys and values like [ key0, value0, key1, value1, ... ].
+     *
+     * @return {Array.<string>}
+     */
+    URI.prototype.getAllParameters = function () {
+        this.checkParameterCache_();
+        return this.paramCache_.slice(0, this.paramCache_.length);
+    };
+    /**
+     * returns the value<b>s</b> for a given cgi parameter as a list of decoded
+     * query parameter values.
+     * @return {Array.<string>}
+     */
+    URI.prototype.getParameterValues = function (paramNameUnescaped) {
+        this.checkParameterCache_();
+        var values = [];
+        for (var i = 0; i < this.paramCache_.length; i += 2) {
+            if (paramNameUnescaped === this.paramCache_[i]) {
+                values.push(this.paramCache_[i + 1]);
+            }
+        }
+        return values;
+    };
+    /**
+     * returns a map of cgi parameter names to (non-empty) lists of values.
+     * @return {Object.<string,Array.<string>>}
+     */
+    URI.prototype.getParameterMap = function (paramNameUnescaped) {
+        this.checkParameterCache_();
+        var paramMap = {};
+        for (var i = 0; i < this.paramCache_.length; i += 2) {
+            var key = this.paramCache_[i++],
+                value = this.paramCache_[i++];
+            if (!(key in paramMap)) {
+                paramMap[key] = [value];
+            } else {
+                paramMap[key].push(value);
+            }
+        }
+        return paramMap;
+    };
+    /**
+     * returns the first value for a given cgi parameter or null if the given
+     * parameter name does not appear in the query string.
+     * If the given parameter name does appear, but has no '<tt>=</tt>' following
+     * it, then the empty string will be returned.
+     * @return {string|null}
+     */
+    URI.prototype.getParameterValue = function (paramNameUnescaped) {
+        this.checkParameterCache_();
+        for (var i = 0; i < this.paramCache_.length; i += 2) {
+            if (paramNameUnescaped === this.paramCache_[i]) {
+                return this.paramCache_[i + 1];
+            }
+        }
+        return null;
+    };
+
+    URI.prototype.getFragment = function () {
+        return this.fragment_ && decodeURIComponent(this.fragment_);
+    };
+    URI.prototype.getRawFragment = function () {
+        return this.fragment_;
+    };
+    URI.prototype.setFragment = function (newFragment) {
+        this.fragment_ = newFragment ? encodeURIComponent(newFragment) : null;
+        return this;
+    };
+    URI.prototype.setRawFragment = function (newFragment) {
+        this.fragment_ = newFragment ? newFragment : null;
+        return this;
+    };
+    URI.prototype.hasFragment = function () {
+        return null !== this.fragment_;
+    };
+
+    function nullIfAbsent(matchPart) {
+        return ('string' == typeof matchPart) && (matchPart.length > 0)
+            ? matchPart
+            : null;
+    }
+
+
+
+
+    /**
+     * a regular expression for breaking a URI into its component parts.
+     *
+     * <p>http://www.gbiv.com/protocols/uri/rfc/rfc3986.html#RFC2234 says
+     * As the "first-match-wins" algorithm is identical to the "greedy"
+     * disambiguation method used by POSIX regular expressions, it is natural and
+     * commonplace to use a regular expression for parsing the potential five
+     * components of a URI reference.
+     *
+     * <p>The following line is the regular expression for breaking-down a
+     * well-formed URI reference into its components.
+     *
+     * <pre>
+     * ^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?
+     *  12            3  4          5       6  7        8 9
+     * </pre>
+     *
+     * <p>The numbers in the second line above are only to assist readability; they
+     * indicate the reference points for each subexpression (i.e., each paired
+     * parenthesis). We refer to the value matched for subexpression <n> as $<n>.
+     * For example, matching the above expression to
+     * <pre>
+     *     http://www.ics.uci.edu/pub/ietf/uri/#Related
+     * </pre>
+     * results in the following subexpression matches:
+     * <pre>
+     *    $1 = http:
+     *    $2 = http
+     *    $3 = //www.ics.uci.edu
+     *    $4 = www.ics.uci.edu
+     *    $5 = /pub/ietf/uri/
+     *    $6 = <undefined>
+     *    $7 = <undefined>
+     *    $8 = #Related
+     *    $9 = Related
+     * </pre>
+     * where <undefined> indicates that the component is not present, as is the
+     * case for the query component in the above example. Therefore, we can
+     * determine the value of the five components as
+     * <pre>
+     *    scheme    = $2
+     *    authority = $4
+     *    path      = $5
+     *    query     = $7
+     *    fragment  = $9
+     * </pre>
+     *
+     * <p>msamuel: I have modified the regular expression slightly to expose the
+     * credentials, domain, and port separately from the authority.
+     * The modified version yields
+     * <pre>
+     *    $1 = http              scheme
+     *    $2 = <undefined>       credentials -\
+     *    $3 = www.ics.uci.edu   domain       | authority
+     *    $4 = <undefined>       port        -/
+     *    $5 = /pub/ietf/uri/    path
+     *    $6 = <undefined>       query without ?
+     *    $7 = Related           fragment without #
+     * </pre>
+     */
+    var URI_RE_ = new RegExp(
+        "^" +
+            "(?:" +
+            "([^:/?#]+)" +         // scheme
+            ":)?" +
+            "(?://" +
+            "(?:([^/?#]*)@)?" +    // credentials
+            "([^/?#:@]*)" +        // domain
+            "(?::([0-9]+))?" +     // port
+            ")?" +
+            "([^?#]+)?" +            // path
+            "(?:\\?([^#]*))?" +      // query
+            "(?:#(.*))?" +           // fragment
+            "$"
+    );
+
+    var URI_DISALLOWED_IN_SCHEME_OR_CREDENTIALS_ = /[#\/\?@]/g;
+    var URI_DISALLOWED_IN_PATH_ = /[\#\?]/g;
+
+    URI.parse = parse;
+    URI.create = create;
+    URI.resolve = resolve;
+    URI.collapse_dots = collapse_dots;  // Visible for testing.
+
+// lightweight string-based api for loadModuleMaker
+    URI.utils = {
+        mimeTypeOf: function (uri) {
+            var uriObj = parse(uri);
+            if (/\.html$/.test(uriObj.getPath())) {
+                return 'text/html';
+            } else {
+                return 'application/javascript';
+            }
+        },
+        resolve: function (base, uri) {
+            if (base) {
+                return resolve(parse(base), parse(uri)).toString();
+            } else {
+                return '' + uri;
+            }
+        }
+    };
+
+
+    return URI;
+})();
+
+// Exports for closure compiler.
+if (typeof window !== 'undefined') {
+    window['URI'] = URI;
+}
+
+
 /* Copyright Google Inc.
  * Licensed under the Apache Licence Version 2.0
  * Autogenerated at Fri Aug 13 11:26:55 PDT 2010
@@ -388,648 +1135,8 @@ html4 .ELEMENTS = {
 };
 
 html4 .URIEFFECTS = {
-    NEW_DOCUMENT: {
-        "FORM::ACTION": ""
-{ "key": "CAPTION::ALIGN", "description": "relative to table",
-    "optional": true },
-{ "key": "APPLET::ALIGN", "description": "vertical or horizontal alignment",
-    "optional": true },
-{ "key": "IFRAME::ALIGN", "description": "vertical or horizontal alignment",
-    "optional": true },
-{ "key": "IMG::ALIGN", "description": "vertical or horizontal alignment",
-    "optional": true },
-{ "key": "INPUT::ALIGN", "description": "vertical or horizontal alignment",
-    "optional": true },
-{ "key": "OBJECT::ALIGN", "description": "vertical or horizontal alignment",
-    "optional": true },
-{ "key": "LEGEND::ALIGN", "description": "relative to fieldset",
-    "optional": true },
-{ "key": "TABLE::ALIGN", "description": "table position relative to window",
-    "optional": true },
-{ "key": "HR::ALIGN",
-    "values": "left,center,right", "optional": true },
-{ "key": "DIV::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H1::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H2::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H3::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H4::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H5::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "H6::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "P::ALIGN", "description": "align, text alignment",
-    "values": "left,center,right,justify", "optional": true },
-{ "key": "COL::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "COLGROUP::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "TBODY::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "TD::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "TFOOT::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "TH::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "THEAD::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "TR::ALIGN",
-    "values": "left,center,right,justify,char", "optional": true },
-{ "key": "BODY::ALINK", "description": "color of selected links",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "APPLET::ALT", "description": "short description",
-    "optional": true },
-{ "key": "AREA::ALT", "description": "short description",
-    "optional": true },
-{ "key": "IMG::ALT", "description": "short description",
-    "optional": true },
-{ "key": "INPUT::ALT", "description": "short description",
-    "optional": true },
-{ "key": "APPLET::ARCHIVE", "description": "comma-separated archive list",
-    "optional": true },
-{ "key": "OBJECT::ARCHIVE", "description": "space-separated list of URIs",
-    "optional": true },
-{ "key": "TD::AXIS", "description": "comma-separated list of related headers",
-    "optional": true },
-{ "key": "TH::AXIS", "description": "comma-separated list of related headers",
-    "optional": true },
-{ "key": "BODY::BACKGROUND", "description": "texture tile for document background",
-    "mimeTypes": "image/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "SANDBOXED" },
-{ "key": "TABLE::BGCOLOR", "description": "background color for cells",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "TR::BGCOLOR", "description": "background color for row",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "TD::BGCOLOR", "description": "cell background color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "TH::BGCOLOR", "description": "cell background color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "BODY::BGCOLOR", "description": "document background color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "TABLE::BORDER", "description": "controls frame width around table",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "IMG::BORDER", "description": "link border width",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "OBJECT::BORDER", "description": "link border width",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "TABLE::CELLPADDING", "description": "spacing within cells",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TABLE::CELLSPACING", "description": "spacing between cells",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "COL::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "COLGROUP::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "TBODY::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "TD::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "TFOOT::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "TH::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "THEAD::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "TR::CHAR", "description": "alignment char, e.g. char=':'",
-    "pattern": ".", "optional": true },
-{ "key": "COL::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "COLGROUP::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TBODY::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TD::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TFOOT::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TH::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "THEAD::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TR::CHAROFF", "description": "offset for alignment char",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "A::CHARSET", "description": "char encoding of linked resource",
-    "optional": true },
-{ "key": "LINK::CHARSET", "description": "char encoding of linked resource",
-    "optional": true },
-{ "key": "SCRIPT::CHARSET", "description": "char encoding of linked resource",
-    "optional": true },
-{ "key": "INPUT::CHECKED", "description": "for radio buttons and check boxes",
-    "values": "checked", "valueless": true, "optional": true },
-{ "key": "BLOCKQUOTE::CITE", "description": "URI for source document or msg",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NOT_LOADED", "loaderType": "UNSANDBOXED" },
-{ "key": "Q::CITE", "description": "URI for source document or msg",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NOT_LOADED", "loaderType": "UNSANDBOXED" },
-{ "key": "DEL::CITE", "description": "info on reason for change",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NOT_LOADED", "loaderType": "UNSANDBOXED" },
-{ "key": "INS::CITE", "description": "info on reason for change",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NOT_LOADED", "loaderType": "UNSANDBOXED" },
-{ "key": "*::CLASS", "description": "space-separated list of classes",
-    "type": "CLASSES", "optional": true },
-{ "key": "OBJECT::CLASSID", "description": "identifies an implementation",
-    "mimeTypes": "application/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "BR::CLEAR", "description": "control of text flow",
-    "values": "left,all,right,none", "default": "none", "optional": true },
-{ "key": "APPLET::CODE", "description": "applet class file",
-    "optional": true },
-{ "key": "OBJECT::CODEBASE", "description": "base URI for classid, data, archive",
-    "mimeTypes": "application/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "APPLET::CODEBASE", "description": "optional base URI for applet",
-    "mimeTypes": "application/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "OBJECT::CODETYPE", "description": "content type for code",
-    "optional": true },
-{ "key": "BASEFONT::COLOR", "description": "text color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "FONT::COLOR", "description": "text color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "FRAMESET::COLS", "description": "list of lengths, default: 100% (1 col)",
-    "optional": true },
-{ "key": "TEXTAREA::COLS",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "TD::COLSPAN", "description": "number of cols spanned by cell",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "TH::COLSPAN", "description": "number of cols spanned by cell",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "DIR::COMPACT", "description": "reduced interitem spacing",
-    "values": "compact", "valueless": true, "optional": true },
-{ "key": "DL::COMPACT", "description": "reduced interitem spacing",
-    "values": "compact", "valueless": true, "optional": true },
-{ "key": "MENU::COMPACT", "description": "reduced interitem spacing",
-    "values": "compact", "valueless": true, "optional": true },
-{ "key": "OL::COMPACT", "description": "reduced interitem spacing",
-    "values": "compact", "valueless": true, "optional": true },
-{ "key": "UL::COMPACT", "description": "reduced interitem spacing",
-    "values": "compact", "valueless": true, "optional": true },
-{ "key": "META::CONTENT", "description": "associated information",
-    "optional": false },
-{ "key": "AREA::COORDS", "description": "comma-separated list of lengths",
-    "pattern": "[0-9]+(?:,[0-9]+)*", "optional": true },
-{ "key": "A::COORDS", "description": "for use with client-side image maps",
-    "pattern": "[0-9]+(?:,[0-9]+)*", "optional": true },
-{ "key": "OBJECT::DATA", "description": "reference to object's data",
-    "mimeTypes": "application/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "DEL::DATETIME", "description": "date and time of change",
-    "optional": true },
-{ "key": "INS::DATETIME", "description": "date and time of change",
-    "optional": true },
-{ "key": "OBJECT::DECLARE", "description": "declare but don't instantiate flag",
-    "values": "declare", "valueless": true, "optional": true },
-{ "key": "SCRIPT::DEFER", "description": "UA may defer execution of script",
-    "values": "defer", "valueless": true, "optional": true },
-{ "key": "*::DIR", "description": "direction for weak/neutral text",
-    "values": "ltr,rtl", "optional": true },
-{ "key": "BDO::DIR", "description": "directionality",
-    "values": "ltr,rtl", "optional": false },
-{ "key": "BUTTON::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "INPUT::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "OPTGROUP::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "OPTION::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "SELECT::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "TEXTAREA::DISABLED", "description": "unavailable in this context",
-    "values": "disabled", "valueless": true, "optional": true },
-{ "key": "FORM::ENCTYPE",
-    "default": "application/x-www-form-urlencoded", "optional": true },
-{ "key": "BASEFONT::FACE", "description": "comma-separated list of font names",
-    "optional": true },
-{ "key": "FONT::FACE", "description": "comma-separated list of font names",
-    "optional": true },
-{ "key": "LABEL::FOR", "description": "matches field ID value",
-    "type": "IDREF", "optional": true },
-{ "key": "TABLE::FRAME", "description": "which parts of frame to render",
-    "values": "void,above,below,border,box,hsides,lhs,rhs,vsides",
-    "optional": true },
-{ "key": "FRAME::FRAMEBORDER", "description": "request frame borders?",
-    "values": "1,0", "default": "1", "optional": true },
-{ "key": "IFRAME::FRAMEBORDER", "description": "request frame borders?",
-    "values": "1,0", "default": "1", "optional": true },
-{ "key": "TD::HEADERS", "description": "list of id's for header cells",
-    "type": "IDREFS", "optional": true },
-{ "key": "TH::HEADERS", "description": "list of id's for header cells",
-    "type": "IDREFS", "optional": true },
-{ "key": "IFRAME::HEIGHT", "description": "frame height",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TD::HEIGHT", "description": "height for cell",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TH::HEIGHT", "description": "height for cell",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "IMG::HEIGHT", "description": "override height",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "OBJECT::HEIGHT", "description": "override height",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "APPLET::HEIGHT", "description": "initial height",
-    "pattern": "[0-9]+%?", "optional": false },
-{ "key": "A::HREF", "description": "URI for linked resource",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NEW_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "AREA::HREF", "description": "URI for linked resource",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "NEW_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "LINK::HREF", "description": "URI for linked resource",
-    "mimeTypes": "text/css", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "BASE::HREF", "description": "URI that acts as base URI",
-    "mimeTypes": "text/html", "optional": true,
-    "type": "URI", "uriEffect": "NOT_LOADED", "loaderType": "UNSANDBOXED" },
-{ "key": "A::HREFLANG", "description": "language code",
-    "optional": true },
-{ "key": "LINK::HREFLANG", "description": "language code",
-    "optional": true },
-{ "key": "APPLET::HSPACE", "description": "horizontal gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "IMG::HSPACE", "description": "horizontal gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "OBJECT::HSPACE", "description": "horizontal gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "META::HTTP-EQUIV", "description": "HTTP response header name",
-    "optional": true },
-{ "key": "*::ID", "description": "document-wide unique id",
-    "type": "ID", "optional": true },
-{ "key": "IMG::ISMAP", "description": "use server-side image map",
-    "values": "ismap", "valueless": true, "optional": true },
-{ "key": "INPUT::ISMAP", "description": "use server-side image map",
-    "values": "ismap", "valueless": true, "optional": true },
-{ "key": "OPTION::LABEL", "description": "for use in hierarchical menus",
-    "optional": true },
-{ "key": "OPTGROUP::LABEL", "description": "for use in hierarchical menus",
-    "optional": false },
-{ "key": "*::LANG", "description": "language code",
-    "optional": true },
-{ "key": "SCRIPT::LANGUAGE", "description": "predefined script language name",
-    "optional": true },
-{ "key": "BODY::LINK", "description": "color of links",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "IMG::LONGDESC", "description": "link to long description (complements alt)",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT", "loaderType": "DATA" },
-{ "key": "FRAME::LONGDESC", "description": "link to long description (complements title)",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT", "loaderType": "DATA" },
-{ "key": "IFRAME::LONGDESC", "description": "link to long description (complements title)",
-    "mimeTypes": "*/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT", "loaderType": "DATA" },
-{ "key": "FRAME::MARGINHEIGHT", "description": "margin height in pixels",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "IFRAME::MARGINHEIGHT", "description": "margin height in pixels",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "FRAME::MARGINWIDTH", "description": "margin widths in pixels",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "IFRAME::MARGINWIDTH", "description": "margin widths in pixels",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "INPUT::MAXLENGTH", "description": "max chars for text fields",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "STYLE::MEDIA", "description": "designed for use with these media",
-    "type": "MEDIA_QUERY", "optional": true },
-{ "key": "LINK::MEDIA", "description": "for rendering on these media",
-    "type": "MEDIA_QUERY", "optional": true },
-{ "key": "FORM::METHOD", "description": "HTTP method used to submit the form",
-    "values": "GET,POST", "default": "GET", "optional": true },
-{ "key": "SELECT::MULTIPLE", "description": "default is single selection",
-    "values": "multiple", "valueless": true, "optional": true },
-{ "key": "BUTTON::NAME",
-    "type": "LOCAL_NAME", "optional": true },
-{ "key": "TEXTAREA::NAME",
-    "type": "LOCAL_NAME", "optional": true },
-{ "key": "APPLET::NAME", "description": "allows applets to find each other",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "SELECT::NAME", "description": "field name",
-    "type": "LOCAL_NAME", "optional": true },
-{ "key": "FORM::NAME", "description": "name of form for scripting",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "FRAME::NAME", "description": "name of frame for targetting",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "IFRAME::NAME", "description": "name of frame for targetting",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "IMG::NAME", "description": "name of image for scripting",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "A::NAME", "description": "named link end",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "INPUT::NAME", "description": "submit as part of form",
-    "type": "LOCAL_NAME", "optional": true },
-{ "key": "OBJECT::NAME", "description": "submit as part of form",
-    "type": "GLOBAL_NAME", "optional": true },
-{ "key": "MAP::NAME", "description": "for reference by usemap",
-    "type": "GLOBAL_NAME", "optional": false },
-{ "key": "PARAM::NAME", "description": "property name",
-    "type": "LOCAL_NAME", "optional": false },
-{ "key": "META::NAME", "description": "metainformation name",
-    "type": "LOCAL_NAME", "optional": true },
-{ "key": "AREA::NOHREF", "description": "this region has no action",
-    "values": "nohref", "valueless": true, "optional": true },
-{ "key": "FRAME::NORESIZE", "description": "allow users to resize frames?",
-    "values": "noresize", "valueless": true, "optional": true },
-{ "key": "HR::NOSHADE",
-    "values": "noshade", "valueless": true, "optional": true },
-{ "key": "TD::NOWRAP", "description": "suppress word wrap",
-    "values": "nowrap", "valueless": true, "optional": true },
-{ "key": "TH::NOWRAP", "description": "suppress word wrap",
-    "values": "nowrap", "valueless": true, "optional": true },
-{ "key": "APPLET::OBJECT", "description": "serialized applet file",
-    "optional": true },
-{ "key": "A::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "AREA::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "BUTTON::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "INPUT::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "LABEL::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "SELECT::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "TEXTAREA::ONBLUR", "description": "the element lost the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "INPUT::ONCHANGE", "description": "the element value was changed",
-    "type": "SCRIPT", "optional": true },
-{ "key": "SELECT::ONCHANGE", "description": "the element value was changed",
-    "type": "SCRIPT", "optional": true },
-{ "key": "TEXTAREA::ONCHANGE", "description": "the element value was changed",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONCLICK", "description": "a pointer button was clicked",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONDBLCLICK", "description": "a pointer button was double clicked",
-    "type": "SCRIPT", "optional": true },
-{ "key": "A::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "AREA::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "BUTTON::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "INPUT::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "LABEL::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "SELECT::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "TEXTAREA::ONFOCUS", "description": "the element got the focus",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONKEYDOWN", "description": "a key was pressed down",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONKEYPRESS", "description": "a key was pressed and released",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONKEYUP", "description": "a key was released",
-    "type": "SCRIPT", "optional": true },
-{ "key": "FRAMESET::ONLOAD", "description": "all the frames have been loaded",
-    "type": "SCRIPT", "optional": true },
-{ "key": "BODY::ONLOAD", "description": "the document has been loaded",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONMOUSEDOWN", "description": "a pointer button was pressed down",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONMOUSEMOVE", "description": "a pointer was moved within",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONMOUSEOUT", "description": "a pointer was moved away",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONMOUSEOVER", "description": "a pointer was moved onto",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONMOUSEUP", "description": "a pointer button was released",
-    "type": "SCRIPT", "optional": true },
-{ "key": "FORM::ONRESET", "description": "the form was reset",
-    "type": "SCRIPT", "optional": true },
-{ "key": "*::ONSCROLL", "description": "element changed scroll position",
-    "type": "SCRIPT", "optional": true },
-{ "key": "INPUT::ONSELECT", "description": "some text was selected",
-    "type": "SCRIPT", "optional": true },
-{ "key": "TEXTAREA::ONSELECT", "description": "some text was selected",
-    "type": "SCRIPT", "optional": true },
-{ "key": "FORM::ONSUBMIT", "description": "the form was submitted",
-    "type": "SCRIPT", "optional": true },
-{ "key": "FRAMESET::ONUNLOAD", "description": "all the frames have been removed",
-    "type": "SCRIPT", "optional": true },
-{ "key": "BODY::ONUNLOAD", "description": "the document has been removed",
-    "type": "SCRIPT", "optional": true },
-{ "key": "HEAD::PROFILE", "description": "named dictionary of meta info",
-    "mimeTypes": "application/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT", "loaderType": "DATA" },
-{ "key": "ISINDEX::PROMPT", "description": "prompt message",
-    "optional": true },
-{ "key": "TEXTAREA::READONLY",
-    "values": "readonly", "valueless": true, "optional": true },
-{ "key": "INPUT::READONLY", "description": "for text and passwd",
-    "values": "readonly", "valueless": true, "optional": true },
-{ "key": "A::REL", "description": "forward link types",
-    "optional": true },
-{ "key": "LINK::REL", "description": "forward link types",
-    "optional": true },
-{ "key": "A::REV", "description": "reverse link types",
-    "optional": true },
-{ "key": "LINK::REV", "description": "reverse link types",
-    "optional": true },
-{ "key": "FRAMESET::ROWS", "description": "list of lengths, default: 100% (1 row)",
-    "optional": true },
-{ "key": "TEXTAREA::ROWS",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "TD::ROWSPAN", "description": "number of rows spanned by cell",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "TH::ROWSPAN", "description": "number of rows spanned by cell",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "TABLE::RULES", "description": "rulings between rows and cols",
-    "optional": true },
-{ "key": "META::SCHEME", "description": "select form of content",
-    "optional": true },
-{ "key": "TD::SCOPE", "description": "scope covered by header cells",
-    "optional": true },
-{ "key": "TH::SCOPE", "description": "scope covered by header cells",
-    "optional": true },
-{ "key": "FRAME::SCROLLING", "description": "scrollbar or none",
-    "values": "yes,no,auto", "default": "auto", "optional": true },
-{ "key": "IFRAME::SCROLLING", "description": "scrollbar or none",
-    "values": "yes,no,auto", "default": "auto", "optional": true },
-{ "key": "OPTION::SELECTED",
-    "values": "selected", "valueless": true, "optional": true },
-{ "key": "AREA::SHAPE", "description": "controls interpretation of coords",
-    "default": "rect", "optional": true },
-{ "key": "A::SHAPE", "description": "for use with client-side image maps",
-    "default": "rect", "optional": true },
-{ "key": "HR::SIZE",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "FONT::SIZE", "description": "[+|-]nn e.g. size=\"+1\", size=\"4\"",
-    "optional": true },
-{ "key": "INPUT::SIZE", "description": "specific to each type of field",
-    "optional": true },
-{ "key": "BASEFONT::SIZE", "description": "base font size for FONT elements",
-    "optional": false },
-{ "key": "SELECT::SIZE", "description": "rows visible",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "COL::SPAN", "description": "COL attributes affect N columns",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "COLGROUP::SPAN", "description": "default number of columns in group",
-    "pattern": "[0-9]+", "default": "1", "optional": true },
-{ "key": "SCRIPT::SRC", "description": "URI for an external script",
-    "mimeTypes": "text/javascript", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "INPUT::SRC", "description": "for fields with images",
-    "mimeTypes": "image/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "SANDBOXED" },
-{ "key": "FRAME::SRC", "description": "source of frame content",
-    "mimeTypes": "text/html", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "IFRAME::SRC", "description": "source of frame content",
-    "mimeTypes": "text/html", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "UNSANDBOXED" },
-{ "key": "IMG::SRC", "description": "URI of image to embed",
-    "mimeTypes": "image/*", "optional": true,
-    "type": "URI", "uriEffect": "SAME_DOCUMENT",
-    "loaderType": "SANDBOXED" },
-{ "key": "OBJECT::STANDBY", "description": "message to show while loading",
-    "optional": true },
-{ "key": "OL::START", "description": "starting sequence number",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "*::STYLE", "description": "associated style info",
-    "type": "STYLE", "optional": true },
-{ "key": "TABLE::SUMMARY",
-    "description": "purpose/structure for speech output",
-    "optional": true },
-{ "key": "A::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "AREA::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "BUTTON::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "INPUT::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "OBJECT::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "SELECT::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "TEXTAREA::TABINDEX", "description": "position in tabbing order",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "A::TARGET", "description": "render in this frame",
-    "type": "FRAME_TARGET", "default": "_self", "optional": true },
-{ "key": "AREA::TARGET", "description": "render in this frame",
-    "type": "FRAME_TARGET", "default": "_self", "optional": true },
-{ "key": "BASE::TARGET", "description": "render in this frame",
-    "type": "FRAME_TARGET", "default": "_self", "optional": true },
-{ "key": "FORM::TARGET", "description": "render in this frame",
-    "type": "FRAME_TARGET", "default": "_self", "optional": true },
-{ "key": "LINK::TARGET", "description": "render in this frame",
-    "type": "FRAME_TARGET", "default": "_self", "optional": true },
-{ "key": "BODY::TEXT", "description": "document text color",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "*::TITLE", "description": "advisory title",
-    "optional": true },
-{ "key": "A::TYPE", "description": "advisory content type",
-    "optional": true },
-{ "key": "LINK::TYPE", "description": "advisory content type",
-    "optional": true },
-{ "key": "OBJECT::TYPE", "description": "content type for data",
-    "optional": true },
-{ "key": "PARAM::TYPE", "description": "content type for value when valuetype=ref",
-    "optional": true },
-{ "key": "SCRIPT::TYPE", "description": "content type of script language",
-    "optional": false, "default": "text/javascript" },
-{ "key": "STYLE::TYPE", "description": "content type of style language",
-    "optional": false, "default": "text/css" },
-{ "key": "INPUT::TYPE", "description": "Type of form control",
-    "values": "hidden,text,search,tel,url,email,password,datetime,date,month,week,time,datetime-local,number,range,color,checkbox,radio,file,submit,image,reset,button",
-    "comment": "Values include HTML5 features",
-    "default": "TEXT", "optional": true },
-{ "key": "LI::TYPE", "description": "list item style",
-    "optional": true },
-{ "key": "OL::TYPE", "description": "numbering style",
-    "optional": true },
-{ "key": "UL::TYPE", "description": "bullet style",
-    "optional": true },
-{ "key": "BUTTON::TYPE", "description": "for use as form button",
-    "values": "button,submit,reset", "default": "submit", "optional": true },
-{ "key": "IMG::USEMAP", "description": "use client-side image map",
-    "pattern": "#.+", "optional": true, "type": "URI_FRAGMENT" },
-{ "key": "INPUT::USEMAP", "description": "use client-side image map",
-    "pattern": "#.+", "optional": true, "type": "URI_FRAGMENT" },
-{ "key": "OBJECT::USEMAP", "description": "use client-side image map",
-    "pattern": "#.+", "optional": true, "type": "URI_FRAGMENT" },
-{ "key": "COL::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "COLGROUP::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "TBODY::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "TD::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "TFOOT::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "TH::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "THEAD::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "TR::VALIGN", "description": "vertical alignment in cells",
-    "values": "top,middle,bottom,baseline", "optional": true },
-{ "key": "INPUT::VALUE", "description": "Specify for radio buttons and checkboxes",
-    "optional": true },
-{ "key": "OPTION::VALUE", "description": "defaults to element content",
-    "optional": true },
-{ "key": "PARAM::VALUE", "description": "property value",
-    "optional": true },
-{ "key": "BUTTON::VALUE", "description": "sent to server when submitted",
-    "optional": true },
-{ "key": "LI::VALUE", "description": "reset sequence number",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "PARAM::VALUETYPE", "description": "How to interpret value",
-    "values": "DATA,REF,OBJECT", "default": "DATA", "optional": true },
-{ "key": "HTML::VERSION", "description": "Constant",
-    "optional": true },
-{ "key": "BODY::VLINK", "description": "color of visited links",
-    "pattern": "\\w+|#[0-9A-Fa-f]{6}", "optional": true },
-{ "key": "APPLET::VSPACE", "description": "vertical gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "IMG::VSPACE", "description": "vertical gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "OBJECT::VSPACE", "description": "vertical gutter",
-    "pattern": "[0-9]+", "optional": true },
-{ "key": "HR::WIDTH",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "IFRAME::WIDTH", "description": "frame width",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "IMG::WIDTH", "description": "override width",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "OBJECT::WIDTH", "description": "override width",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TABLE::WIDTH", "description": "table width",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TD::WIDTH", "description": "width for cell",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "TH::WIDTH", "description": "width for cell",
-    "pattern": "[0-9]+%?", "optional": true },
-{ "key": "APPLET::WIDTH", "description": "initial width",
-    "pattern": "[0-9]+%?", "optional": false },
-{ "key": "COL::WIDTH", "description": "column width specification",
-    "optional": true },
-{ "key": "COLGROUP::WIDTH", "description": "default width for enclosed COLs",
-    "optional": true },
-{ "key": "PRE::WIDTH",
-    "pattern": "[0-9]+", "optional": true }
-]
 
-}
+};
 html4 .LOADERTYPES = {}
 
 // The Turkish i seems to be a non-issue, but abort in case it is.
@@ -1830,7 +1937,6 @@ var html = (function(html4) {
     function lookupAttribute(map, tagName, attribName) {
         var attribKey;
         attribKey = tagName + '::' + attribName;
-        console.log(attribKey)
         if (map.hasOwnProperty(attribKey)) {
             return map[attribKey];
         }
