@@ -10,6 +10,8 @@ var sanitizer = require('sanitizer');
 
 == Use
 
+See /test/test-sanitzer.js for full documentation.
+
 sanitizer.escape('your dirty string'); // Escapes HTML special characters in attribute values as HTML entities
 
 var yourParser = sanitizer.makeSaxParser(yourHandler); // Given a SAX-like event handler, produce a function that feeds those events and a parameter to the event handler.

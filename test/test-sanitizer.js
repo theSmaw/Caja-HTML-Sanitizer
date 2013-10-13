@@ -155,122 +155,130 @@ describe('Sanitizer.sanitize', function() {
         assert.equal('<a title="x  SCRIPT=javascript:alert(1) ignored=ignored"></a>', sanitizer.sanitize('<A TITLE="x\0  SCRIPT=javascript:alert(1) ignored=ignored">', uriPolicy, nmTokenPolicy));
     });
 
-    it('should test digits in attr names', function() {
+    it('should sanitize digits in attr names', function() {
         assert.equal('<div>Hello</div>', sanitizer.sanitize('<div style1="expression(\'alert(1)\')">Hello</div>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize digits in attr names', function() {
+        assert.equal('<div>Hello</div>', sanitizer.sanitize('<div style1="expression(\'alert(1)\')">Hello</div>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize incomplete tag open', function() {
+        assert.equal('x', sanitizer.sanitize('x<a', uriPolicy, nmTokenPolicy));
+        assert.equal('x', sanitizer.sanitize('x<a ', uriPolicy, nmTokenPolicy));
+        assert.equal('x', sanitizer.sanitize('x<a\n', uriPolicy, nmTokenPolicy));
+        assert.equal('x', sanitizer.sanitize('x<a bc', uriPolicy, nmTokenPolicy));
+        assert.equal('x', sanitizer.sanitize('x<a\nbc', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize with uri policy', function() {
+
+        assert.equal('<a href="http://www.example.com/">hi</a>', sanitizer.sanitize('<a href="http://www.example.com/">hi</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a>hi</a>', sanitizer.sanitize('<a href="http://www.example.com/">hi</a>', function(uri) {
+            return null;
+        }));
+
+        assert.equal('<a>hi</a>', sanitizer.sanitize('<a href="javascript:alert(1)">hi</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a>hi</a>', sanitizer.sanitize('<a href="javascript:alert(1)">hi</a>', function(uri) {
+            return null;
+        }));
+
+        assert.equal('<a>hi</a>', sanitizer.sanitize('<a href=" javascript:alert(1)">hi</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a>hi</a>', sanitizer.sanitize('<a href=" javascript:alert(1)">hi</a>', function(uri) {
+            return null;
+        }));
+
+        assert.equal('<a href="//www.example.com/">hi</a>', sanitizer.sanitize('<a href="//www.example.com/">hi</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a href="foo.html">hi</a>', sanitizer.sanitize('<a href="foo.html">hi</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a href="bar/baz.html">hi</a>', sanitizer.sanitize('<a href="foo.html">hi</a>', function(uri) {
+            return "bar/baz.html";
+        }));
+
+        assert.equal('<a href="mailto:jas@example.com">mail me</a>', sanitizer.sanitize('<a href="mailto:jas@example.com">mail me</a>', function(uri) {
+            return uri;
+        }));
+
+        assert.equal('<a>mail me</a>', sanitizer.sanitize('<a href="mailto:jas@example.com">mail me</a>', function(uri) {
+            return null;
+        }));
+
+        assert.equal('<a href="foo.html">test</a>', sanitizer.sanitize('<a href="foo.html">test</a>', function(uri, effect, ltype, hints) {
+            assert.equal("MARKUP", hints.TYPE);
+            assert.equal("href", hints.XML_ATTR);
+            assert.equal("a", hints.XML_TAG);
+            return uri;
+        }));
+    });
+
+    it('should sanitize with tag policy', function() {
+
+        assert.equal('<a href="http://www.example.com/">hi</a> there', sanitizer.sanitizeWithPolicy('<a href="http://www.example.com/">hi</a> there', function(name, attribs) {
+            return {
+                attribs: attribs
+            };
+        }));
+
+        assert.equal(' there', sanitizer.sanitizeWithPolicy('<a href="http://www.example.com/">hi</a> there', function(name, attribs) {
+            return null;
+        }));
+
+        assert.equal('<a x="y">hi</a> there', sanitizer.sanitizeWithPolicy('<a href="http://www.example.com/">hi</a> there', function(name, attribs) {
+            return {
+                attribs: ["x", "y"]
+            };
+        }));
+
+        assert.equal('<xax href="http://www.example.com/">hi</xax> there', sanitizer.sanitizeWithPolicy('<a href="http://www.example.com/">hi</a> there', function(name, attribs) {
+            return {
+                attribs: attribs,
+                tagName: 'x' + name + 'x'
+            };
+        }));
+
+        assert.equal('<span>a<xspanx r="1">b</xspanx>c</span>', sanitizer.sanitizeWithPolicy('<span>a<span r=1>b</span>c</span>', function (name, attribs) {
+            return {
+                attribs: attribs,
+                tagName: attribs.length ? 'x' + name + 'x' : name
+            };
+        }));
+
+        assert.equal('<ul><li>a</li><xlix r="1">b</xlix></ul>', sanitizer.sanitizeWithPolicy('<ul><li>a<li r=1>b</li></ul>', function (name, attribs) {
+            return {
+                attribs: attribs,
+                tagName: attribs.length ? 'x' + name + 'x' : name
+            };
+        }));
+
+        assert.equal('<ul><li>a<ul><xlix r="1">b</xlix></ul></li></ul>', sanitizer.sanitizeWithPolicy('<ul><li>a<ul><li r=1>b</li></ul></li></ul>', function (name, attribs) {
+            return {
+                attribs: attribs,
+                tagName: attribs.length ? 'x' + name + 'x' : name
+            };
+        }));
+    });
+
+    it('should create messages', function() {
+        assert.equal('<a title="x  SCRIPT=javascript:alert(1) ignored=ignored"></a>', sanitizer.sanitize('<A TITLE="x\0  SCRIPT=javascript:alert(1) ignored=ignored">', uriPolicy, nmTokenPolicy));
     });
 });
 
 
-//jsunitRegister('testIncompleteTagOpen',
-//    function testIncompleteTagOpen() {
-//        check1('x<a', 'x');
-//        check1('x<a ', 'x');
-//        check1('x<a\n', 'x');
-//        check1('x<a bc', 'x');
-//        check1('x<a\nbc', 'x');
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testUriPolicy',
-//    function testUriPolicy() {
-//        assertEquals('<a href="http://www.example.com/">hi</a>',
-//            html.sanitize('<a href="http://www.example.com/">hi</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a>hi</a>',
-//            html.sanitize('<a href="http://www.example.com/">hi</a>',
-//                function(uri) { return null; }));
-//        assertEquals('<a>hi</a>',
-//            html.sanitize('<a href="javascript:alert(1)">hi</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a>hi</a>',
-//            html.sanitize('<a href="javascript:alert(1)">hi</a>',
-//                function(uri) { return null; }));
-//        assertEquals('<a>hi</a>',
-//            html.sanitize('<a href=" javascript:alert(1)">hi</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a>hi</a>',
-//            html.sanitize('<a href=" javascript:alert(1)">hi</a>',
-//                function(uri) { return null; }));
-//        assertEquals('<a href="//www.example.com/">hi</a>',
-//            html.sanitize('<a href="//www.example.com/">hi</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a href="foo.html">hi</a>',
-//            html.sanitize('<a href="foo.html">hi</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a href="bar/baz.html">hi</a>',
-//            html.sanitize('<a href="foo.html">hi</a>',
-//                function(uri) { return "bar/baz.html"; }));
-//        assertEquals('<a href="mailto:jas@example.com">mail me</a>',
-//            html.sanitize('<a href="mailto:jas@example.com">mail me</a>',
-//                function(uri) { return uri; }));
-//        assertEquals('<a>mail me</a>',
-//            html.sanitize('<a href="mailto:jas@example.com">mail me</a>',
-//                function(uri) { return null; }));
-//
-//        assertEquals('<a href="foo.html">test</a>',
-//            html.sanitize('<a href="foo.html">test</a>',
-//                function(uri, effect, ltype, hints) {
-//                    assertEquals("MARKUP", hints.TYPE);
-//                    assertEquals("href", hints.XML_ATTR);
-//                    assertEquals("a", hints.XML_TAG);
-//                    return uri;
-//                }));
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testTagPolicy',
-//    function testTagPolicy() {
-//        // NOTE: makeHtmlSanitizer / sanitizeWithPolicy is not documented in the wiki
-//        // JsHtmlSanitizer doc. However, it is used by Caja and other clients. Changes
-//        // to this API should be noted in releases.
-//        function checkT(expected, input, tagPolicy) {
-//            assertEquals(expected, html.sanitizeWithPolicy(input, tagPolicy));
-//        }
-//        // pass tag
-//        checkT('<a href="http://www.example.com/">hi</a> there',
-//            '<a href="http://www.example.com/">hi</a> there',
-//            function(name, attribs) {
-//                return {attribs: attribs};
-//            });
-//        // reject tag
-//        checkT(' there',
-//            '<a href="http://www.example.com/">hi</a> there',
-//            function(name, attribs) {
-//                return null;
-//            });
-//        // modify attribs
-//        checkT('<a x="y">hi</a> there',
-//            '<a href="http://www.example.com/">hi</a> there',
-//            function(name, attribs) {
-//                return {attribs: ["x", "y"]};
-//            });
-//        // modify tagName
-//        checkT('<xax href="http://www.example.com/">hi</xax> there',
-//            '<a href="http://www.example.com/">hi</a> there',
-//            function(name, attribs) {
-//                return {attribs: attribs, tagName: 'x' + name + 'x'};
-//            });
-//        function conditionalRewritePolicy(name, attribs) {
-//            return {attribs: attribs,
-//                tagName: attribs.length ? 'x' + name + 'x' : name};
-//        }
-//        // proper end-tag matching w/ rewrite
-//        checkT('<span>a<xspanx r="1">b</xspanx>c</span>',
-//            '<span>a<span r=1>b</span>c</span>',
-//            conditionalRewritePolicy);
-//        // proper optional-end-tag handling w/ rewrite - siblings
-//        // (Note: This example will not sensibly parse as HTML; it is only to stress
-//        // the intended algorithm here.)
-//        checkT('<ul><li>a</li><xlix r="1">b</xlix></ul>',
-//            '<ul><li>a<li r=1>b</li></ul>',
-//            conditionalRewritePolicy);
-//        // descendant end-tag matching (Ditto.)
-//        checkT('<ul><li>a<ul><xlix r="1">b</xlix></ul></li></ul>',
-//            '<ul><li>a<ul><li r=1>b</li></ul></li></ul>',
-//            conditionalRewritePolicy);
-//        jsunit.pass();
-//    });
-//
+
 //function assertSanitizerMessages(input, expected, messages) {
 //    logMessages = [];
 //    var actual = html.sanitize(input, uriPolicy, nmTokenPolicy, logPolicy);
