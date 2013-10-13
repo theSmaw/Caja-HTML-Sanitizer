@@ -20,6 +20,10 @@ sanitizer.sanitize('your dirty string'); // Strips unsafe tags and attributes fr
 
 exports.unescapeEntities('your string'); // The plain text of a chunk of HTML CDATA which possibly containing.
 
+== Caveats
+
+It's use this at your own risk really - Caja HTML Sanitizer was written by people far cleverer than me. I have just repackaged it to solve a problem I had (sanitization on a Node server). It seems to work, and it passes all its tests in re-packaged form - however I don't fully understand its internals so cannot guarantee its security.
+
 
 == More information
 

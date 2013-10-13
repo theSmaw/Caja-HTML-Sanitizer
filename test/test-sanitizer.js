@@ -75,151 +75,92 @@ describe('Sanitizer.sanitize', function() {
 
     it('should remove invalid usemaps', function() {
         assert.equal('<b>hello <i>world&lt;</i></b>', sanitizer.sanitize('<b id="a," class="b c/d e">hello <i class="i*j">world<</i></b>', uriPolicy, nmTokenPolicy))
+        assert.equal('<img src="u:http://bar">', sanitizer.sanitize('<img src="http://bar">', uriPolicy, nmTokenPolicy))
+        assert.equal('<img src="u:http://bar">', sanitizer.sanitize('<img usemap="" src="http://bar">', uriPolicy, nmTokenPolicy))
+        assert.equal('<img src="u:http://bar">', sanitizer.sanitize('<img usemap="foo" src="http://bar">', uriPolicy, nmTokenPolicy))
+    });
+
+    it('should sanitize non-string input', function() {
+        var bad = '<b whacky=foo><script src=badness.js></script>bar</b id=foo>';
+        assert.equal('<b>bar</b>', sanitizer.sanitize({
+            toString: function () {
+                return bad;
+            }
+        }, uriPolicy, nmTokenPolicy))
+    });
+
+    it('should sanitize special chars in attributes', function() {
+        assert.equal('<b title="a&lt;b &amp;&amp; c&gt;b">bar</b>', sanitizer.sanitize('<b title="a<b && c>b">bar</b>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize unclosed tags', function() {
+        assert.equal('<div id="p-foo">Bar<br>Baz</div>', sanitizer.sanitize('<div id="foo">Bar<br>Baz', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize unopened tags', function() {
+        assert.equal('Foo<b>Bar</b>Baz', sanitizer.sanitize('Foo<b></select>Bar</b></b>Baz</select>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize unsafe end tags', function() {
+        assert.equal('', sanitizer.sanitize('</meta http-equiv="refresh" content="1;URL=http://evilgadget.com">', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize empty end tags', function() {
+        assert.equal('<input>', sanitizer.sanitize('<input></input>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should strip onload', function() {
+        assert.equal('<img src="u:http://foo.com/bar">', sanitizer.sanitize('<img src=http://foo.com/bar ONLOAD=alert(1)>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize closing tag parameters', function() {
+        assert.equal('<p>1<p>2</p><p>3</p>5</p>', sanitizer.sanitize('<p>1</b style="x"><p>2</p /bar><p>3</p title=">4">5', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize optional end tags', function() {
+        assert.equal('<ol> <li>A</li> <li>B<li>C </ol>', sanitizer.sanitize('<ol> <li>A</li> <li>B<li>C </ol>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize folding of html and body tags', function() {
+        assert.equal('<p>P 1</p>', sanitizer.sanitize('<html><head><title>Foo</title></head>'
+            + '<body><p>P 1</p></body></html>', uriPolicy, nmTokenPolicy));
+        assert.equal('Hello', sanitizer.sanitize('<body bgcolor="blue">Hello</body>', uriPolicy, nmTokenPolicy));
+        assert.equal('<p>Foo</p><p>One</p><p>Two</p>Three<p>Four</p>', sanitizer.sanitize('<html>'
+            + '<head>'
+            + '<title>Blah</title>'
+            + '<p>Foo</p>'
+            + '</head>'
+            + '<body>'
+            + '<p>One</p>'
+            + '<p>Two</p>'
+            + 'Three'
+            + '<p>Four</p>'
+            + '</body>'
+            + '</html>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize empty and valueless attributes', function() {
+        assert.equal('<input checked="" type="checkbox" id="" class="">', sanitizer.sanitize('<input checked type=checkbox id="" class=>', uriPolicy, nmTokenPolicy));
+        assert.equal('<input checked="" type="checkbox" id="" class="">', sanitizer.sanitize('<input checked type=checkbox id= class="">', uriPolicy, nmTokenPolicy));
+       assert.equal('<input checked="" type="checkbox" id="" class="">', sanitizer.sanitize('<input checked type=checkbox id= class = "">', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize SGML short tags', function() {
+        assert.equal('', sanitizer.sanitize('<p/b/', uriPolicy, nmTokenPolicy));
+        assert.equal('<p>first part of the text&lt;/&gt; second part</p>', sanitizer.sanitize('<p<a href="/">first part of the text</> second part', uriPolicy, nmTokenPolicy));
+        assert.equal('<p></p>', sanitizer.sanitize('<p<b>', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should sanitize Nul', function() {
+        assert.equal('<a title="x  SCRIPT=javascript:alert(1) ignored=ignored"></a>', sanitizer.sanitize('<A TITLE="x\0  SCRIPT=javascript:alert(1) ignored=ignored">', uriPolicy, nmTokenPolicy));
+    });
+
+    it('should test digits in attr names', function() {
+        assert.equal('<div>Hello</div>', sanitizer.sanitize('<div style1="expression(\'alert(1)\')">Hello</div>', uriPolicy, nmTokenPolicy));
     });
 });
 
-//jsunitRegister('testInvalidUsemapRemoved',
-//    function testInvalidUsemapRemoved() {
-//        check1('<img src="http://bar">',
-//            '<img src="u:http://bar">');
-//        check1('<img usemap="" src="http://bar">',
-//            '<img src="u:http://bar">');
-//        check1('<img usemap="foo" src="http://bar">',
-//            '<img src="u:http://bar">');
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testNonStringInput',
-//    function testNonStringInput() {
-//        var bad = '<b whacky=foo><script src=badness.js></script>bar</b id=foo>';
-//        check({ toString: function () { return bad; } },
-//            '<b>bar</b>');
-//    });
-//
-//jsunitRegister('testSpecialCharsInAttributes',
-//    function testSpecialCharsInAttributes() {
-//        check('<b title="a<b && c>b">bar</b>',
-//            '<b title="a&lt;b &amp;&amp; c&gt;b">bar</b>');
-//    });
-//
-//jsunitRegister('testUnclosedTags',
-//    function testUnclosedTags() {
-//        check('<div id="foo">Bar<br>Baz',
-//            '<div id="p-foo">Bar<br>Baz</div>');
-//    });
-//
-//jsunitRegister('testUnopenedTags',
-//    function testUnopenedTags() {
-//        check('Foo<b></select>Bar</b></b>Baz</select>',
-//            'Foo<b>Bar</b>Baz');
-//    });
-//
-//jsunitRegister('testUnsafeEndTags',
-//    function testUnsafeEndTags() {
-//        check('</meta http-equiv="refresh" content="1;URL=http://evilgadget.com">',
-//            '');
-//    });
-//
-//jsunitRegister('testEmptyEndTags',
-//    function testEmptyEndTags() {
-//        check('<input></input>',
-//            '<input>');
-//    });
-//
-//jsunitRegister('testOnLoadStripped',
-//    function testOnLoadStripped() {
-//        check('<img src=http://foo.com/bar ONLOAD=alert(1)>',
-//            '<img src="u:http://foo.com/bar">');
-//    });
-//
-//jsunitRegister('testClosingTagParameters',
-//    function testClosingTagParameters() {
-//        check('<p>1</b style="x"><p>2</p /bar><p>3</p title=">4">5',
-//            '<p>1<p>2</p><p>3</p>5</p>');
-//    });
-//
-//jsunitRegister('testOptionalEndTags',
-//    function testOptionalEndTags() {
-//        // The difference is significant because in the first, the item contains no
-//        // space after 'A', but in the third, the item contains 'C' and a space.
-//        check('<ol> <li>A</li> <li>B<li>C </ol>');
-//    });
-//
-//jsunitRegister('testFoldingOfHtmlAndBodyTags',
-//    function testFoldingOfHtmlAndBodyTags() {
-//        check1('<html><head><title>Foo</title></head>'
-//            + '<body><p>P 1</p></body></html>',
-//            '<p>P 1</p>');
-//        check1('<body bgcolor="blue">Hello</body>',
-//            'Hello');
-//        check1('<html>'
-//            + '<head>'
-//            + '<title>Blah</title>'
-//            + '<p>Foo</p>'
-//            + '</head>'
-//            + '<body>'
-//            + '<p>One</p>'
-//            + '<p>Two</p>'
-//            + 'Three'
-//            + '<p>Four</p>'
-//            + '</body>'
-//            + '</html>',
-//            '<p>Foo</p><p>One</p><p>Two</p>Three<p>Four</p>');
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testEmptyAndValuelessAttributes',
-//    function testEmptyAndValuelessAttributes() {
-//        check1('<input checked type=checkbox id="" class=>',
-//            '<input checked="" type="checkbox" id="" class="">');
-//        check1('<input checked type=checkbox id= class="">',
-//            '<input checked="" type="checkbox" id="" class="">');
-//        check1('<input checked type=checkbox id= class = "">',
-//            '<input checked="" type="checkbox" id="" class="">');
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testSgmlShortTags',
-//    function testSgmlShortTags() {
-//        // We make no attempt to correctly handle SGML short tags since they are
-//        // not implemented consistently across browsers, and have been removed from
-//        // HTML 5.
-//        //
-//        // According to http://www.w3.org/QA/2007/10/shorttags.html
-//        //      Shorttags - the odd side of HTML 4.01
-//        //      ...
-//        //      It uses an ill-known feature of SGML called shorthand markup, which
-//        //      was authorized in HTML up to HTML 4.01. But what used to be a "cool"
-//        //      feature for SGML experts becomes a liability in HTML, where the
-//        //      construct is more likely to appear as a typo than as a conscious
-//        //      choice.
-//        //
-//        //      All could be fine if this form typo-that-happens-to-be-legal was
-//        //      properly implemented in contemporary HTML user-agents. It is not.
-//        check1('<p/b/', '');  // Short-tag discarded.
-//        check1('<p<b>', '<p></p>');  // Discard <b attribute
-//        check1(
-//            '<p<a href="/">first part of the text</> second part',
-//            '<p>first part of the text&lt;/&gt; second part</p>');
-//        jsunit.pass();
-//    });
-//
-//jsunitRegister('testNul',
-//    function testNul() {
-//        // See bug 614 for details.
-//        check(
-//            '<A TITLE="x\0  SCRIPT=javascript:alert(1) ignored=ignored">',
-//            '<a title="x  SCRIPT=javascript:alert(1) ignored=ignored"></a>');
-//    });
-//
-//jsunitRegister('testDigitsInAttrNames',
-//    function testDigitsInAttrNames() {
-//        // See bug 614 for details.
-//        check(
-//            '<div style1="expression(\'alert(1)\')">Hello</div>',
-//            '<div>Hello</div>');
-//    });
-//
+
 //jsunitRegister('testIncompleteTagOpen',
 //    function testIncompleteTagOpen() {
 //        check1('x<a', 'x');
