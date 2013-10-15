@@ -1,5 +1,5 @@
-var html4 = require("./html4.js");
-var URI = require("./uri.js");
+var html4 = require("./lib/html4.js");
+var URI = require("./lib/uri.js");
 
 // Copyright (C) 2006 Google Inc.
 //

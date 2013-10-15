@@ -12,7 +12,7 @@
     "type": "Apache",
     "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
   }],
-  "main"        : ".src/sanitizer.js",
+  "main"        : "./sanitizer.js",
   "repository" : {
     "type" : "git",
     "url"  : "http://github.com/theSmaw/Caja-HTML-Sanitizer.git"

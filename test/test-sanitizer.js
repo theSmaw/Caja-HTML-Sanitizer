@@ -1,5 +1,5 @@
 var assert = require("assert");
-var sanitizer = require("../src/sanitizer.js");
+var sanitizer = require("../sanitizer.js");
 
 var logMessages = [];
 
