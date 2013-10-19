@@ -124,6 +124,10 @@ describe('Sanitizer.sanitize', function() {
         assert.equal('<p>1<p>2</p><p>3</p>5</p>', sanitizer.sanitize('<p>1</b style="x"><p>2</p /bar><p>3</p title=">4">5', uriPolicy, nmTokenPolicy));
     });
 
+    it('should sanitize auto-closing tags', function() {
+        assert.equal('<p><a name="p-foo"></a> This is the foo section.</p><p><a name="p-bar"></a> This is the bar section.</p>', sanitizer.sanitize('<p><a name="foo"/> This is the foo section.</p><p><a name="bar"/> This is the bar section.</p>', uriPolicy, nmTokenPolicy));
+    });
+
     it('should sanitize optional end tags', function() {
         assert.equal('<ol> <li>A</li> <li>B<li>C </ol>', sanitizer.sanitize('<ol> <li>A</li> <li>B<li>C </ol>', uriPolicy, nmTokenPolicy));
     });

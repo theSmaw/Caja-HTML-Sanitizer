@@ -1067,10 +1067,26 @@ if (typeof window !== 'undefined') {
     window['html_sanitize'] = html_sanitize;
 }
 
+Sanitizer = {};
 
 // Ensure backwards compatibility
-Sanitizer = html;
+Sanitizer.escapeAttrib = html.escapeAttrib;
+Sanitizer.makeHtmlSanitizer = html.makeHtmlSanitizer;
+Sanitizer.makeSaxParser = html.makeSaxParser;
+Sanitizer.makeTagPolicy = html.makeTagPolicy;
+Sanitizer.normalizeRCData = html.normalizeRCData
+Sanitizer.sanitizeAttribs = html.sanitizeAttribs
+Sanitizer.sanitizeWithPolicy = html.sanitizeWithPolicy
+Sanitizer.unescapeEntities = html.unescapeEntities
 Sanitizer.escape = html.escapeAttrib;
+
+// https://github.com/theSmaw/Caja-HTML-Sanitizer/issues/8
+Sanitizer.sanitize = function(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy, opt_logger) {
+    if (typeof(inputHtml) === "string") {
+        inputHtml = inputHtml.replace(/<([a-zA-Z]+)([^>]*)\/>/g, '<$1$2></$1>');
+    }
+    return html.sanitize(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy, opt_logger)
+}
 
 // the browser, add 'Sanitizer' as a global object via a string identifier,
 // for Closure Compiler "advanced" mode.
