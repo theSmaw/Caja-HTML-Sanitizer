@@ -1067,7 +1067,7 @@ if (typeof window !== 'undefined') {
     window['html_sanitize'] = html_sanitize;
 }
 
-Sanitizer = {};
+var Sanitizer = {};
 
 // Ensure backwards compatibility
 Sanitizer.escapeAttrib = html.escapeAttrib;
