@@ -168,7 +168,12 @@ var html = (function(html4) {
      *     an HTML entity.
      */
     function unescapeEntities(s) {
-        return s.replace(ENTITY_RE_1, decodeOneEntity);
+	if(s) {
+	    return s.replace(ENTITY_RE_1, decodeOneEntity);
+	}
+	else {
+	    return s;
+	}
     }
 
     var ampRe = /&/g;
@@ -190,8 +195,14 @@ var html = (function(html4) {
      * }
      */
     function escapeAttrib(s) {
-        return ('' + s).replace(ampRe, '&amp;').replace(ltRe, '&lt;')
+	if(s) {
+	    return ('' + s).replace(ampRe, '&amp;').replace(ltRe, '&lt;')
             .replace(gtRe, '&gt;').replace(quotRe, '&#34;');
+	}
+	else {
+	    return s;
+	}
+        
     }
 
     /**
@@ -202,10 +213,15 @@ var html = (function(html4) {
      * }
      */
     function normalizeRCData(rcdata) {
-        return rcdata
-            .replace(looseAmpRe, '&amp;$1')
-            .replace(ltRe, '&lt;')
-            .replace(gtRe, '&gt;');
+	if(rcdata) {
+	    return rcdata
+                .replace(looseAmpRe, '&amp;$1')
+                .replace(ltRe, '&lt;')
+                .replace(gtRe, '&gt;');
+	}
+	else {
+	    return rcdata;
+	}
     }
 
     // TODO(felix8a): validate sanitizer regexs against the HTML5 grammar at
@@ -1085,7 +1101,14 @@ Sanitizer.sanitize = function(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy
     if (typeof(inputHtml) === "string") {
         inputHtml = inputHtml.replace(/<([a-zA-Z]+)([^>]*)\/>/g, '<$1$2></$1>');
     }
-    return html.sanitize(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy, opt_logger)
+    
+    if (inputHtml) {
+        return html.sanitize(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy, opt_logger);
+    }
+    else {
+        return inputHtml;
+    }
+    
 }
 
 // the browser, add 'Sanitizer' as a global object via a string identifier,
