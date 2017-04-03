@@ -952,6 +952,7 @@ var html = (function(html4) {
                     case html4.atype['GLOBAL_NAME']:
                     case html4.atype['LOCAL_NAME']:
                     case html4.atype['CLASSES']:
+                    case html4.atype['FRAME_TARGET']:
                         value = opt_nmTokenPolicy ? opt_nmTokenPolicy(value) : value;
                         if (opt_logger) {
                             log(opt_logger, tagName, attribName, oldValue, value);
