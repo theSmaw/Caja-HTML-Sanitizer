@@ -31,6 +31,9 @@ function logPolicy(msg, detail) {
 }
 
 describe('Sanitizer.sanitize', function() {
+    it('should sanitize boolean', function() {
+        assert.equal(true, sanitizer.sanitize(true));
+    });
 
     it('should sanitize empty', function() {
         assert.equal('', sanitizer.sanitize(''))
