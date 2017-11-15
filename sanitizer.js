@@ -1098,6 +1098,10 @@ Sanitizer.escape = html.escapeAttrib;
 
 // https://github.com/theSmaw/Caja-HTML-Sanitizer/issues/8
 Sanitizer.sanitize = function(inputHtml, opt_naiveUriRewriter, opt_nmTokenPolicy, opt_logger) {
+    if (typeof(inputHtml) === 'boolean') {
+        return inputHtml;
+    }
+
     if (typeof(inputHtml) === "string") {
         inputHtml = inputHtml.replace(/<([a-zA-Z]+)([^>]*)\/>/g, '<$1$2></$1>');
     }
