@@ -1,3 +1,9 @@
+# Maintainers wanted
+
+I don't have time to maintain this repo, and have long forgotten how any of it works.
+
+If anyone would like to take on ownership, please let me know.
+
 ## Installation
 
 ```
