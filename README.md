@@ -12,7 +12,7 @@ npm install sanitizer
 
 ## Require
 
-```
+```js
 var sanitizer = require('sanitizer');
 ```
 
@@ -20,23 +20,23 @@ var sanitizer = require('sanitizer');
 
 See /test/test-sanitzer.js for full documentation.
 
-```
+```js
 sanitizer.escape('your dirty string'); // Escapes HTML special characters in attribute values as HTML entities
 ```
 
-```
+```js
 var yourParser = sanitizer.makeSaxParser(yourHandler); // Given a SAX-like event handler, produce a function that feeds those events and a parameter to the event handler.
 ```
 
-```
+```js
 sanitizer.normalizeRCData('your dirty string'); // Escape entities in RCDATA that can be escaped without changing the meaning.
 ```
 
-```
+```js
 sanitizer.sanitize('your dirty string'); // Strips unsafe tags and attributes from html.
 ```
 
-```
+```js
 exports.unescapeEntities('your string'); // The plain text of a chunk of HTML CDATA which possibly containing.
 ```
 
